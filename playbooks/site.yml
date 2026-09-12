@@ -1,0 +1,19 @@
+---
+- name: check SSM is reachable on every host
+  hosts: all
+  gather_facts: false
+  roles:
+    - role: ssm_bootstrap
+
+- name: install and configure CloudWatch Agent
+  hosts: all
+  gather_facts: true
+  roles:
+    - role: cloudwatch_agent
+
+- name: create CloudWatch alarms and SNS topics
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: disk_alerting

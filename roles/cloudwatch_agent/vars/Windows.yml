@@ -1,0 +1,6 @@
+---
+# cloudwatch_agent/vars/Windows.yml
+# Loaded automatically by include_vars when ansible_os_family == "Windows"
+cloudwatch_agent_config_path_windows: 'C:\ProgramData\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent.json'
+cloudwatch_agent_service_name_windows: AmazonCloudWatchAgent
+cloudwatch_agent_installer_url_windows: "https://s3.amazonaws.com/amazoncloudwatch-agent/windows/amd64/latest/amazon-cloudwatch-agent.msi"

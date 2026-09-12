@@ -1,0 +1,12 @@
+---
+- name: restart cloudwatch agent linux
+  ansible.builtin.service:
+    name: "{{ cloudwatch_agent_service_name_linux }}"
+    state: restarted
+  listen: restart cloudwatch agent linux
+
+- name: restart cloudwatch agent windows
+  ansible.windows.win_service:
+    name: "{{ cloudwatch_agent_service_name_windows }}"
+    state: restarted
+  listen: restart cloudwatch agent windows

@@ -1,0 +1,50 @@
+---
+- name: set arch and package manager
+  ansible.builtin.set_fact:
+    cwa_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+    cwa_pkg_mgr: "{{ 'rpm' if ansible_os_family in ['RedHat', 'Amazon', 'Suse'] else 'deb' }}"
+
+- name: set download URL
+  ansible.builtin.set_fact:
+    cwa_pkg_url: "{{ cloudwatch_agent_download_base }}/linux/{{ cwa_arch }}/latest/amazon-cloudwatch-agent.{{ cwa_pkg_mgr }}"
+
+- name: download CloudWatch Agent
+  ansible.builtin.get_url:
+    url: "{{ cwa_pkg_url }}"
+    dest: "/tmp/amazon-cloudwatch-agent.{{ cwa_pkg_mgr }}"
+    mode: "0644"
+
+- name: install (rpm)
+  ansible.builtin.yum:
+    name: "/tmp/amazon-cloudwatch-agent.rpm"
+    state: present
+  when: cwa_pkg_mgr == 'rpm'
+
+- name: install (deb)
+  ansible.builtin.apt:
+    deb: "/tmp/amazon-cloudwatch-agent.deb"
+    state: present
+  when: cwa_pkg_mgr == 'deb'
+
+- name: render agent config
+  ansible.builtin.template:
+    src: amazon-cloudwatch-agent.json.j2
+    dest: "{{ cloudwatch_agent_config_path_linux }}"
+    owner: root
+    group: root
+    mode: "0640"
+  notify: restart cloudwatch agent linux
+
+- name: apply config and start agent
+  ansible.builtin.command:
+    cmd: >
+      /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
+        -a fetch-config -m ec2 -s
+        -c file:{{ cloudwatch_agent_config_path_linux }}
+  changed_when: false
+
+- name: ensure service is running and enabled
+  ansible.builtin.service:
+    name: "{{ cloudwatch_agent_service_name_linux }}"
+    state: started
+    enabled: true

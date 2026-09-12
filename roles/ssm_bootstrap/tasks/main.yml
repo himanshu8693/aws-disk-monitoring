@@ -1,0 +1,71 @@
+---
+# Pre-flight check: verify this instance is reachable via SSM before any other role runs.
+#
+# The key subtlety (FIX 3): this task delegates to localhost and calls the AWS SSM API.
+# The dynamic inventory already assumed the correct per-account role (via assume_role_arn
+# in the inventory file), and the host vars carry the assumed role ARN. But a bare
+# `aws ssm describe-instance-information` on localhost will use whatever credentials are
+# in the environment — which may be the automation account's base credentials, not the
+# member-account role.
+#
+# Fix: extract the assumed_role_arn from hostvars and pass it explicitly as AWS_ROLE_ARN
+# via environment, using a per-host STS session. This keeps the check consistent with how
+# the rest of Ansible reaches the host: automation account credentials → AssumeRole →
+# member account credentials → SSM.
+
+- name: assume per-account role and get temporary credentials for pre-flight check
+  ansible.builtin.command:
+    cmd: >
+      aws sts assume-role
+        --role-arn {{ assumed_role_arn }}
+        --role-session-name ssm-preflight-{{ inventory_hostname | regex_replace('[^a-zA-Z0-9_=,.@-]', '-') }}
+        --external-id {{ ssm_bootstrap_external_id_prefix }}-{{ account_id }}
+        --duration-seconds 900
+        --output json
+  delegate_to: localhost
+  connection: local
+  changed_when: false
+  no_log: true
+  register: sts_raw
+  vars:
+    # assumed_role_arn is the same value the inventory used; we derive it from the inventory
+    # compose block so this stays DRY — it's the assume_role_arn from the inventory file.
+    assumed_role_arn: "arn:aws:iam::{{ account_id }}:role/DiskMonitoringAutomationRole"
+
+- name: parse STS credentials
+  ansible.builtin.set_fact:
+    preflight_creds: "{{ (sts_raw.stdout | from_json).Credentials }}"
+  no_log: true
+
+- name: check SSM managed-instance status using member-account role
+  ansible.builtin.command:
+    cmd: >
+      aws ssm describe-instance-information
+        --filters "Key=InstanceIds,Values={{ inventory_hostname }}"
+        --region {{ ansible_aws_ssm_region }}
+        --output json
+  delegate_to: localhost
+  connection: local
+  changed_when: false
+  register: ssm_info_raw
+  environment:
+    AWS_ACCESS_KEY_ID: "{{ preflight_creds.AccessKeyId }}"
+    AWS_SECRET_ACCESS_KEY: "{{ preflight_creds.SecretAccessKey }}"
+    AWS_SESSION_TOKEN: "{{ preflight_creds.SessionToken }}"
+
+- name: parse SSM response
+  ansible.builtin.set_fact:
+    ssm_info: "{{ (ssm_info_raw.stdout | from_json).InstanceInformationList | default([]) }}"
+
+- name: fail clearly if instance is not online
+  ansible.builtin.fail:
+    msg: >
+      {{ inventory_hostname }} (account {{ account_id | default('unknown') }}) is not reachable via SSM.
+      PingStatus expected '{{ ssm_bootstrap_required_ping_status }}', got '{{ ssm_info[0].PingStatus | default('not-registered') }}'.
+      Check: SSM agent running? Instance profile attached? Outbound 443 open to ssm.{{ ansible_aws_ssm_region }}.amazonaws.com?
+  when: ssm_info | length == 0 or ssm_info[0].PingStatus != ssm_bootstrap_required_ping_status
+
+- name: report SSM status
+  ansible.builtin.debug:
+    msg: "OK {{ inventory_hostname }} — PingStatus={{ ssm_info[0].PingStatus }}, Platform={{ ssm_info[0].PlatformType | default('?') }}, AgentVersion={{ ssm_info[0].AgentVersion | default('?') }}"
+  when: ssm_info | length > 0

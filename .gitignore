@@ -1,0 +1,63 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.eggs/
+htmlcov/
+.coverage
+.coverage.*
+
+# ─── Terraform ────────────────────────────────────────────────────────────────
+# Downloaded provider binaries — never commit these (can be GBs)
+**/.terraform/
+# State files — contain sensitive outputs; manage remotely (S3 backend)
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+# Crash logs
+crash.log
+crash.*.log
+# Override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+# Plan files can contain secrets
+*.tfplan
+.terraform.lock.hcl
+
+# ─── Ansible ──────────────────────────────────────────────────────────────────
+*.retry
+.ansible_async/
+.vault_pass
+.vault_pass.txt
+
+# ─── AWS / Secrets ────────────────────────────────────────────────────────────
+.env
+.env.*
+*.pem
+*.key
+aws_credentials
+credentials.json
+
+# ─── macOS ────────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# ─── Editors ──────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

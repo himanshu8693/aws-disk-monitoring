@@ -1,0 +1,12 @@
+---
+disk_alert_warning_percent: 75
+disk_alert_critical_percent: 85
+disk_alert_evaluation_minutes: 10
+
+cloudwatch_namespace: "DiskMonitoring"
+
+sns_topic_name: disk-monitoring-alerts
+sns_topic_display_name: "Disk Monitoring Alerts"
+
+monitoring_account_id: "999999999999"
+monitoring_region: us-east-1

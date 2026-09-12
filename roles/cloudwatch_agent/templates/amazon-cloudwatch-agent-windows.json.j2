@@ -1,0 +1,27 @@
+{
+  "agent": {
+    "metrics_collection_interval": {{ cloudwatch_metrics_collection_interval_seconds }}
+  },
+  "metrics": {
+    "namespace": "{{ cloudwatch_namespace }}",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}",
+      "AccountId": "{{ account_id | default('${aws:AccountId}') }}",
+      "AccountName": "{{ account_name | default('unknown') }}",
+      "Platform": "Windows"
+    },
+    "metrics_collected": {
+      "LogicalDisk": {
+        "measurement": [
+          {
+            "name": "Free Megabytes",
+            "rename": "DiskFreeBytes",
+            "unit": "Megabytes"
+          }
+        ],
+        "resources": ["*"],
+        "metrics_collection_interval": {{ cloudwatch_metrics_collection_interval_seconds }}
+      }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "agent": {
+    "metrics_collection_interval": {{ cloudwatch_metrics_collection_interval_seconds }},
+    "run_as_user": "cwagent"
+  },
+  "metrics": {
+    "namespace": "{{ cloudwatch_namespace }}",
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}",
+      "AccountId": "{{ account_id | default('${aws:AccountId}') }}",
+      "AccountName": "{{ account_name | default('unknown') }}",
+      "Platform": "Linux"
+    },
+    "metrics_collected": {
+      "disk": {
+        "measurement": [
+          {
+            "name": "disk_used_percent",
+            "rename": "DiskUsedPercent",
+            "unit": "Percent"
+          },
+          {
+            "name": "disk_free",
+            "rename": "DiskFreeBytes",
+            "unit": "Bytes"
+          },
+          {
+            "name": "disk_used",
+            "rename": "DiskUsedBytes",
+            "unit": "Bytes"
+          },
+          {
+            "name": "disk_total",
+            "rename": "DiskCapacityBytes",
+            "unit": "Bytes"
+          }
+        ],
+        "resources": {{ cloudwatch_disk_monitor_paths | to_json }},
+        "ignore_file_system_types": ["sysfs", "devtmpfs", "tmpfs", "squashfs", "overlay"],
+        "metrics_collection_interval": {{ cloudwatch_metrics_collection_interval_seconds }}
+      }
+    }
+  }
+}

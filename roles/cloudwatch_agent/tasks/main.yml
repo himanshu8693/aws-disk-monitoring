@@ -1,0 +1,13 @@
+---
+- name: load Windows-specific vars
+  ansible.builtin.include_vars:
+    file: "Windows.yml"
+  when: ansible_os_family == "Windows"
+
+- name: run Linux tasks
+  ansible.builtin.include_tasks: linux.yml
+  when: ansible_os_family != "Windows"
+
+- name: run Windows tasks
+  ansible.builtin.include_tasks: windows.yml
+  when: ansible_os_family == "Windows"

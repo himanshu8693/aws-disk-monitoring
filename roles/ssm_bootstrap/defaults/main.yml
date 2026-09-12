@@ -1,0 +1,4 @@
+---
+ssm_bootstrap_required_ping_status: "Online"
+# Must match the ExternalId suffix in the account-bootstrap Terraform module's trust policy.
+ssm_bootstrap_external_id_prefix: "disk-monitoring"

@@ -1,0 +1,76 @@
+---
+# Windows metric strategy (FIX 4):
+# The CloudWatch Agent for Windows collects "% Free Space" (inverse of what we want).
+# To emit DiskUsedPercent with the same semantics as Linux, we deploy a PowerShell script
+# that runs as a Windows Scheduled Task every minute and calls aws cloudwatch put-metric-data.
+# The CW Agent is still installed for infrastructure metrics; DiskUsedPercent comes from the script.
+# This way alarms, dashboards, and the metric contract are identical across Linux and Windows.
+
+- name: download CloudWatch Agent MSI
+  ansible.windows.win_get_url:
+    url: "{{ cloudwatch_agent_installer_url_windows }}"
+    dest: 'C:\Windows\Temp\amazon-cloudwatch-agent.msi'
+
+- name: install CloudWatch Agent
+  ansible.windows.win_package:
+    path: 'C:\Windows\Temp\amazon-cloudwatch-agent.msi'
+    state: present
+    arguments: /quiet /norestart
+
+- name: render CW Agent config (infrastructure metrics, not disk)
+  ansible.windows.win_template:
+    src: amazon-cloudwatch-agent-windows.json.j2
+    dest: "{{ cloudwatch_agent_config_path_windows }}"
+  notify: restart cloudwatch agent windows
+
+- name: apply config and start CW Agent
+  ansible.windows.win_shell: |
+    & "C:\Program Files\Amazon\AmazonCloudWatchAgent\amazon-cloudwatch-agent-ctl.ps1" `
+      -a fetch-config -m ec2 -s `
+      -c "file:{{ cloudwatch_agent_config_path_windows }}"
+  changed_when: false
+
+- name: ensure CW Agent service is running
+  ansible.windows.win_service:
+    name: "{{ cloudwatch_agent_service_name_windows }}"
+    state: started
+    start_mode: auto
+
+# Deploy the DiskUsedPercent emission script
+- name: create script directory
+  ansible.windows.win_file:
+    path: 'C:\Program Files\DiskMonitoring'
+    state: directory
+
+- name: copy DiskUsedPercent emission script
+  ansible.windows.win_copy:
+    src: emit-disk-metrics.ps1
+    dest: 'C:\Program Files\DiskMonitoring\emit-disk-metrics.ps1'
+
+- name: set account name environment variable for the script
+  ansible.windows.win_environment:
+    name: ACCOUNT_NAME
+    value: "{{ account_name | default('unknown') }}"
+    state: present
+    level: machine
+
+- name: register scheduled task to emit DiskUsedPercent every minute
+  ansible.windows.win_scheduled_task:
+    name: DiskMonitoringEmitMetrics
+    description: "Emits DiskUsedPercent custom metric to CloudWatch every minute."
+    actions:
+      - path: powershell.exe
+        arguments: >-
+          -NonInteractive -ExecutionPolicy Bypass
+          -File "C:\Program Files\DiskMonitoring\emit-disk-metrics.ps1"
+          -Namespace {{ cloudwatch_namespace }}
+    triggers:
+      - type: registration
+      - type: time
+        repetition:
+          interval: PT1M
+          stop_at_duration_end: false
+    username: SYSTEM
+    run_level: highest
+    state: present
+    enabled: true
