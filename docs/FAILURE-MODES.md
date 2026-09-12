@@ -144,7 +144,7 @@ The goal is not to claim the system is fault-free — it is to demonstrate that 
 
 ## 9. SNS topic not subscribed
 
-**Scenario:** The SNS topic `lucidity-disk-alerts` exists and alarms are configured to publish to it, but no email or PagerDuty endpoint is subscribed.
+**Scenario:** The SNS topic `disk-monitoring-alerts` exists and alarms are configured to publish to it, but no email or PagerDuty endpoint is subscribed.
 
 **Blast radius:** Alarms fire correctly in CloudWatch, but no one is notified. Silent breach.
 

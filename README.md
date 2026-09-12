@@ -1,6 +1,6 @@
 # Disk Utilization Monitoring Across AWS Accounts
 
-**Assessment:** Lucidity Solutions Architect — Cloud Consultant case study
+**Assessment:** Solutions Architect — Cloud Consultant case study
 **Cloud provider chosen:** AWS
 
 ---

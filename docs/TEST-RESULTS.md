@@ -18,7 +18,7 @@
 ## Setup
 
 ```bash
-cd ~/Desktop/lucidity-disk-monitoring-assignment
+cd ~/Desktop/aws-disk-monitoring
 python3 -m venv .venv
 source .venv/bin/activate
 pip install pytest jinja2
@@ -63,7 +63,7 @@ python3 -m pytest tests/test_alarm_rule_generation.py -v
 ```
 ============================= test session starts ==============================
 platform darwin -- Python 3.14.5, pytest-9.1.1, pluggy-1.6.0
-rootdir: /Users/himanshusharma/Desktop/lucidity-disk-monitoring-assignment
+rootdir: ~/Desktop/aws-disk-monitoring
 collected 15 items
 
 tests/test_alarm_rule_generation.py::test_single_instance_single_region PASSED
