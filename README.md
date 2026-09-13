@@ -1,7 +1,43 @@
 # Disk Utilization Monitoring Across AWS Accounts
 
-**Assessment:** Solutions Architect — Cloud Consultant case study
-**Cloud provider chosen:** AWS
+**Assessment:** Solutions Architect — Cloud Consultant case study  
+**Cloud provider:** AWS
+
+---
+
+## Architecture overview
+
+```mermaid
+flowchart TD
+    subgraph AUTO["🔧 Automation Account"]
+        ANSIBLE["Ansible Control Node\nIAM Identity Center · no static keys"]
+    end
+
+    subgraph MEMBERS["🏢 Member Accounts  (acquired companies)"]
+        EC2L["EC2 Linux\nCloudWatch Agent"]
+        EC2W["EC2 Windows\nPowerShell scheduled task"]
+        CW["CloudWatch\nDiskMonitoring namespace"]
+        EC2L & EC2W -->|"DiskUsedPercent · 60s"| CW
+    end
+
+    subgraph MON["📊 Monitoring Account"]
+        OAM["OAM Sink\nread-only metric access"]
+        ALARMS["Per-instance alarms\nDiskUsedPercent ≥ 85%\ntreat_missing_data: breaching"]
+        COMPOSITE["Regional composite alarm\nany instance critical → 1 page"]
+        SNS["SNS · disk-monitoring-alerts"]
+        OAM --> ALARMS --> COMPOSITE --> SNS
+    end
+
+    ANSIBLE -->|"sts:AssumeRole + ExternalId\nSSM Session · no open ports"| MEMBERS
+    ANSIBLE -->|"Creates alarms & SNS"| MON
+    CW -->|"OAM link · read-only"| OAM
+    SNS --> ONCALL["📟 On-call"]
+
+    style AUTO    fill:#0d2137,stroke:#388bfd,color:#79c0ff
+    style MEMBERS fill:#0f3d1f,stroke:#3fb950,color:#56d364
+    style MON     fill:#1c1c3a,stroke:#8957e5,color:#bc8cff
+    style ONCALL  fill:#2d1a00,stroke:#d29922,color:#ffa657
+```
 
 ---
 
@@ -11,156 +47,35 @@ A multi-account AWS environment grown through acquisitions needs early warning o
 
 ---
 
-## Architecture overview
+## Access management
 
-```mermaid
-flowchart TD
-    subgraph AUTO["🔧 Automation Account"]
-        ANSIBLE["Ansible Control Node\nIAM Identity Center · No static keys"]
-    end
+Zero static credentials. Credential chain:
 
-    subgraph ACCA["🏢 Member Account A  ·  us-east-1 / us-west-2"]
-        EC2L["EC2 Linux\nCloudWatch Agent"]
-        EC2W["EC2 Windows\nPowerShell scheduled task"]
-        CWA["CloudWatch\nDiskMonitoring namespace"]
-        EC2L & EC2W -->|"DiskUsedPercent\nevery 60s"| CWA
-    end
-
-    subgraph ACCB["🏢 Member Account B  ·  eu-west-1"]
-        EC2B["EC2 Linux\nCloudWatch Agent"]
-        CWB["CloudWatch\nDiskMonitoring namespace"]
-        EC2B -->|"DiskUsedPercent\nevery 60s"| CWB
-    end
-
-    subgraph MON["📊 Monitoring Account"]
-        OAMSINK["OAM Sink\n(read-only metric access)"]
-        ALARMS["Per-instance alarms\nDiskUsedPercent ≥ 85%\ntreat_missing_data: breaching"]
-        COMPOSITE["Regional composite alarm\nANY instance critical → 1 page"]
-        SNS["SNS Topic\ndisk-monitoring-alerts"]
-        DASH["CloudWatch Dashboard"]
-        OAMSINK --> ALARMS --> COMPOSITE --> SNS
-    end
-
-    %% Ansible provisions everything
-    ANSIBLE -->|"sts:AssumeRole + ExternalId\nSSM Session · no SSH · no open ports"| ACCA
-    ANSIBLE -->|"sts:AssumeRole + ExternalId\nSSM Session · no SSH · no open ports"| ACCB
-    ANSIBLE -->|"Creates alarms\n& SNS topics"| MON
-
-    %% Metrics flow via OAM
-    CWA -->|"OAM link\nread-only"| OAMSINK
-    CWB -->|"OAM link\nread-only"| OAMSINK
-
-    %% Alert
-    SNS -->|"Alert"| ONCALL["📟 On-call\nSlack / PagerDuty"]
-
-    style AUTO  fill:#0d2137,stroke:#388bfd,color:#79c0ff
-    style ACCA  fill:#0f3d1f,stroke:#3fb950,color:#56d364
-    style ACCB  fill:#0f3d1f,stroke:#3fb950,color:#56d364
-    style MON   fill:#1c1c3a,stroke:#8957e5,color:#bc8cff
-    style ONCALL fill:#2d1a00,stroke:#d29922,color:#ffa657
+```
+IAM Identity Center / OIDC CI role (Automation account)
+  └─ sts:AssumeRole → DiskMonitoringAutomationRole (each member account)
+       Condition: ExternalId = disk-monitoring-<account-id>
+       └─ SSM Session Manager → EC2 instance
+            outbound HTTPS only · zero inbound ports · CloudTrail logged
 ```
 
-> **Full diagrams** — account topology, metric collection, alarm chain, IAM trust model, sequence diagram, and onboarding flow — are in [`docs/architecture.md`](docs/architecture.md).
+**Automation role permissions:** `ec2:Describe*`, `ssm:StartSession`, `ssm:DescribeInstanceInformation`, S3 read/write on the SSM transfer bucket only. Cannot create or delete AWS resources.
+
+**Instance profile:** `AmazonSSMManagedInstanceCore` + `CloudWatchAgentServerPolicy`. Nothing else.
+
+**Monitoring account:** accesses member metrics via OAM (read-only). No trust relationship into member accounts — cannot assume roles or modify resources there.
+
+All IAM roles, trust policies, and OAM links are provisioned by Terraform (`terraform/account-bootstrap/` per member account, `terraform/org-oam-sink/` once in the monitoring account).
 
 ---
 
-## A. Access management
+## VM discovery and enrollment
 
-### How VMs are securely managed across multiple accounts
-
-Zero static credentials anywhere. The credential chain:
-
-```
-IAM Identity Center (SSO) or OIDC CI role
-  └─ Short-lived STS token (Automation account)
-       └─ sts:AssumeRole → DiskMonitoringAutomationRole (each member account)
-            ExternalId: disk-monitoring-<account-id>
-            (prevents confused-deputy attacks)
-            └─ SSM Session Manager → EC2 instance
-                 (outbound HTTPS only, zero open inbound ports, CloudTrail logged)
-```
-
-**Why SSM instead of SSH:**  
-SSH across acquired accounts means managing key pairs with no consistent process, varying security group rules, and no audit trail. SSM gives one IAM-based control plane, CloudTrail logging of every session, and zero inbound port requirements.
-
-**Least privilege:**  
-- The automation role can only describe EC2 instances, start SSM sessions, and read/write the SSM S3 transfer bucket. It cannot create or delete AWS resources.
-- EC2 instances carry `AmazonSSMManagedInstanceCore` + `CloudWatchAgentServerPolicy`. Nothing else.
-
-**Blast radius:**  
-- Monitoring account compromised: read metrics, create/delete alarms. No member-account resource access.
-- Automation account compromised: start SSM sessions on enrolled instances. No resource creation, no data access.
-
-**Infrastructure:** All IAM roles, trust policies, and OAM links are provisioned by Terraform (`terraform/account-bootstrap/` per member account, `terraform/org-oam-sink/` once in the monitoring account).
-
----
-
-## B. Data collection and aggregation
-
-### How disk usage is collected
-
-**Linux:**  
-The CloudWatch Agent reads `disk_used_percent` from the OS and renames it `DiskUsedPercent` in the `DiskMonitoring` namespace. Configuration template: `roles/cloudwatch_agent/templates/amazon-cloudwatch-agent.json.j2`.
-
-**Windows:**  
-The Windows CloudWatch Agent natively emits `% Free Space` (inverted). Instead of inverted alarm logic, a PowerShell scheduled task (`roles/cloudwatch_agent/files/emit-disk-metrics.ps1`) runs every minute, calculates `used% = (size - free) / size × 100`, and calls `aws cloudwatch put-metric-data` to emit `DiskUsedPercent` — the same metric name as Linux.
-
-**Normalized metric contract (both platforms):**
-
-| Metric | Namespace | Dimensions |
-|---|---|---|
-| `DiskUsedPercent` | `DiskMonitoring` | `InstanceId` |
-| `DiskFreeBytes` | `DiskMonitoring` | `InstanceId` |
-| `DiskUsedBytes` | `DiskMonitoring` | `InstanceId` |
-| `DiskCapacityBytes` | `DiskMonitoring` | `InstanceId` |
-
-### How data is centralized
-
-CloudWatch OAM (Observability Access Manager) links each member account to the monitoring account's sink. After linking, the monitoring account can query metrics from all member accounts as if they were local — no data copying, no aggregation pipeline.
-
-**Why OAM instead of a custom pipeline:**  
-OAM is the native AWS mechanism. A custom pipeline (Lambda + Kinesis + DynamoDB) would add infrastructure to operate, introduce additional failure modes, and provide no benefit over the native read-only access that OAM gives.
-
-**Alarm placement:** All per-instance alarms and regional composite alarms live in the monitoring account. This is required — CloudWatch composite alarms can only reference alarms in the same account and region.
-
-**Per-instance alarm (cross-account metric query):**
-```yaml
-metrics:
-  - id: disk_used
-    account_id: "{{ hostvars[item]['account_id'] }}"   # source account
-    metric_stat:
-      metric:
-        namespace: "{{ cloudwatch_namespace }}"
-        metric_name: DiskUsedPercent
-        dimensions:
-          - name: InstanceId
-            value: "{{ item }}"
-      period: 60
-      stat: Average
-      unit: Percent
-    return_data: true
-comparison: ">="
-threshold: 85.0
-treat_missing_data: breaching
-```
-
-`treat_missing_data: breaching` means a stopped agent fires the alarm rather than staying silently green — the correct default for disk monitoring.
-
-**Regional composite alarm:**  
-One composite alarm per region aggregates all per-instance alarms: `ALARM("disk-critical-<account>-<instance>") OR ...`. If any instance in the region is critical, one page is sent rather than N individual pages.
-
----
-
-## C. VM discovery and enrollment
-
-### Dynamic inventory
-
-The `amazon.aws.aws_ec2` plugin discovers all running EC2 instances at playbook run time. One inventory file per account in `inventory/accounts/`:
+Dynamic inventory via `amazon.aws.aws_ec2` — one file per account in `inventory/accounts/`. Discovers all running instances at playbook run time using the assumed cross-account role. No static host lists.
 
 ```yaml
 plugin: amazon.aws.aws_ec2
 assume_role_arn: arn:aws:iam::111111111111:role/DiskMonitoringAutomationRole
-regions: [us-east-1, us-west-2]
 filters:
   instance-state-name: running
 compose:
@@ -169,141 +84,135 @@ compose:
   account_id: "'111111111111'"
 ```
 
-No static inventory files to maintain. No manual host lists.
+**Enrollment:** Instance boots with `DiskMonitoringInstanceProfile` → next Ansible run discovers it → `ssm_bootstrap` verifies SSM reachability → `cloudwatch_agent` installs and configures the agent → `disk_alerting` creates the alarm. Every role is idempotent; nightly runs correct drift.
 
-### Enrollment process
-
-```
-New EC2 instance boots with DiskMonitoringInstanceProfile attached
-         ↓
-Next Ansible run (nightly or on-demand)
-         ↓
-aws_ec2 plugin discovers instance
-         ↓
-ssm_bootstrap role: verifies SSM reachability (PingStatus == Online)
-         ↓
-cloudwatch_agent role: installs/configures agent (idempotent)
-         ↓
-disk_alerting role: creates per-instance alarm in monitoring account
-         ↓
-Instance is monitored
-```
-
-**Idempotency:** Every role can run repeatedly. Re-running on an already-configured instance produces `changed=0`. This means the playbook can run nightly as a drift-detection sweep — any instance that had its config modified gets corrected automatically.
-
-**New account onboarding:**
-1. `terraform apply` in `terraform/account-bootstrap/` for the new account
-2. Add one inventory file in `inventory/accounts/`
-3. Run `ansible-playbook playbooks/site.yml`
+**New account:** `terraform apply account-bootstrap/` → add one inventory file → run playbook.
 
 ---
 
-## D. Scalability
+## Disk collection
 
-| Dimension | PoC behaviour | Production path |
-|---|---|---|
-| New VMs | Discovered on next playbook run via dynamic inventory | Attach `DiskMonitoringInstanceProfile` at launch; nightly run enrolls |
-| New accounts | Add one Terraform apply + one inventory file | EventBridge rule on account creation → pipeline |
-| New regions | OAM link + alarms per region; each inventory file lists regions | Same pipeline adds region to existing account's config |
-| 10 → 1,000 VMs | Per-instance alarms scale linearly; composite alarm rule grows | Switch to per-account composite alarms using Metric Math at ~200 instances/region |
-| Alarm noise | Composite alarm fires once for any number of simultaneous breaches | Same design works at any scale |
+**Linux:** CloudWatch Agent renames `disk_used_percent` → `DiskUsedPercent` in the `DiskMonitoring` namespace. Config: `roles/cloudwatch_agent/templates/amazon-cloudwatch-agent.json.j2`.
 
-**Agent push model scales independently of Ansible.** The CloudWatch Agent pushes metrics every 60 seconds with no Ansible involvement after setup. Ansible is only in the path at install-time and for nightly drift correction — not for continuous metric collection.
+**Windows:** The CW Agent natively emits `% Free Space` (inverted). A PowerShell scheduled task (`roles/cloudwatch_agent/files/emit-disk-metrics.ps1`) runs every minute as SYSTEM, calculates `(Size − FreeSpace) / Size × 100`, and calls `aws cloudwatch put-metric-data` to emit `DiskUsedPercent` — identical metric name to Linux.
+
+Both platforms emit: `DiskUsedPercent`, `DiskFreeBytes`, `DiskUsedBytes`, `DiskCapacityBytes` with dimensions `InstanceId`, `AccountId`, `AccountName`, `Platform`.
+
+> Ansible is used for installation and drift correction only — **not** for continuous 60-second polling. The agent push model scales independently of Ansible.
+
+---
+
+## Central aggregation and alerting
+
+**OAM** links each member account to the monitoring account's sink. The monitoring account can query cross-account metrics natively — no data copying, no custom pipeline.
+
+**Per-instance alarm** (monitoring account, cross-account metric query):
+```yaml
+metrics:
+  - id: disk_used
+    account_id: "{{ hostvars[item]['account_id'] }}"  # MetricDataQuery level — not a dimension
+    metric_stat:
+      metric:
+        namespace: DiskMonitoring
+        metric_name: DiskUsedPercent
+        dimensions:
+          - name: InstanceId
+            value: "{{ item }}"
+      period: 60
+      stat: Average
+threshold: 85.0
+treat_missing_data: breaching   # dead agent = alarm, not silence
+```
+
+`account_id` is set at the `MetricDataQuery` level — this is the correct CloudWatch cross-account alarm mechanism. Setting it as a metric dimension does not work for alarm routing.
+
+**Composite alarm:** one per region — `ALARM("disk-critical-<account>-<instance>") OR ...` — fires once regardless of how many instances are critical simultaneously.
+
+**Alarm placement:** both per-instance and composite alarms live in the monitoring account. CloudWatch composite alarms can only reference alarms in the same account and region — member-account alarms cannot be aggregated cross-account.
+
+---
+
+## Scalability
+
+| Dimension | How it scales |
+|---|---|
+| New VMs | Dynamic inventory discovers on next run; nightly drift sweep enrolls automatically |
+| New accounts | One `terraform apply` + one inventory file |
+| New regions | OAM link + alarms per region; inventory file lists regions |
+| Large fleets (~200+ instances/region) | Hierarchical composite alarms: per-account composites → regional composite |
+| Alert noise | Composite alarm sends one notification regardless of how many instances breach |
+
+---
+
+## Key design decisions
+
+| Decision | Rationale |
+|---|---|
+| AWS | Production familiarity; SSM and OAM are exactly the native services needed |
+| SSM over SSH | No key distribution across acquired accounts; IAM-based; full audit trail; zero open ports |
+| CloudWatch Agent push over Ansible polling | Ansible polling every 60s across thousands of instances is impractical; agent scales independently |
+| OAM over custom aggregation | Native, read-only, no infrastructure to operate; no ETL pipeline to maintain |
+| Alarms in monitoring account | CloudWatch requirement — composite alarms must reference same-account alarms |
+
+---
+
+## Known limitations
+
+| Item | Notes |
+|---|---|
+| Windows IMDSv2 | PowerShell script uses IMDSv1; will fail if account enforces IMDSv2 token requirement |
+| Alarm cleanup | No automated cleanup when instances are terminated; stale alarms accumulate |
+| Composite alarm scale | Rule string limit (~170 instances/region); hierarchical composites needed at scale |
+| Not live-tested | Code has not run against real AWS accounts — see `docs/TEST-RESULTS.md` |
 
 ---
 
 ## Repo layout
 
 ```
-ansible.cfg                         Ansible configuration
-requirements.yml                    Collection dependencies (amazon.aws, community.aws, ansible.windows)
-group_vars/all.yml                  Global variables (thresholds, namespace, SNS topic name)
+ansible.cfg / requirements.yml      Ansible configuration and collection dependencies
+group_vars/all.yml                  Global variables: thresholds (85%/75%), namespace, SNS name
 
 inventory/accounts/                 One file per AWS account — dynamic EC2 discovery
-  acquired-co-a.aws_ec2.yml
-  acquired-co-b.aws_ec2.yml
-
-playbooks/site.yml                  Main playbook: ssm_bootstrap → cloudwatch_agent → disk_alerting
+playbooks/site.yml                  Three plays: ssm_bootstrap → cloudwatch_agent → disk_alerting
 
 roles/
-  ssm_bootstrap/                    Pre-flight: verifies SSM reachability per-account via STS
-  cloudwatch_agent/                 Installs CW Agent (Linux) or deploys PowerShell task (Windows)
-  disk_alerting/                    Creates per-instance + composite alarms in monitoring account
+  ssm_bootstrap/                    Pre-flight SSM reachability check via STS AssumeRole
+  cloudwatch_agent/                 CW Agent (Linux) or PowerShell scheduled task (Windows)
+  disk_alerting/                    Per-instance + composite alarms in monitoring account
 
 terraform/
-  account-bootstrap/                Per-account: IAM roles, instance profile, VPC endpoints, OAM link
-  org-oam-sink/                     One-time: OAM sink + SNS in monitoring account
+  account-bootstrap/                IAM roles, instance profile, S3 SSM bucket, OAM link
+  org-oam-sink/                     OAM sink + SNS topic in monitoring account
 
 tests/
-  test_alarm_rule_generation.py     15 offline tests: alarm logic, metric normalization, static analysis
-  demo_offline.py                   End-to-end demo without AWS credentials
+  test_alarm_rule_generation.py     15 offline tests
+  demo_offline.py                   End-to-end offline demo
 
 docs/
-  architecture.md                   Full account topology and data flow diagrams
-  ARCHITECTURAL-DECISIONS.md        8 key decisions with rationale and trade-offs
-  FAILURE-MODES.md                  10 failure scenarios with detection and recovery paths
-  TEST-RESULTS.md                   Actual test output and validation matrix
+  architecture.md                   Account topology, data flow, onboarding diagrams
+  TEST-RESULTS.md                   Validation results and known gaps
 ```
 
 ---
 
-## Running the PoC locally
+## Running locally
 
 ```bash
-# Install Ansible collections
-ansible-galaxy collection install -r requirements.yml
-
 # Validate Terraform (no AWS credentials needed)
 cd terraform/account-bootstrap && terraform validate
 cd ../org-oam-sink && terraform validate
 
-# Run offline tests (no AWS credentials needed)
+# Run tests (no AWS credentials needed)
 python3 -m venv .venv && source .venv/bin/activate && pip install pytest jinja2
 python3 -m pytest tests/test_alarm_rule_generation.py -v
 
-# Run offline end-to-end demo
+# Offline demo
 python3 tests/demo_offline.py
-
-# Full playbook (requires real AWS accounts with Terraform modules applied)
-ansible-playbook playbooks/site.yml
 ```
 
 ---
 
 ## PoC vs production
 
-This repository demonstrates the core architecture and minimal working flow requested by the assessment. It is syntactically and logically correct. Production deployment would additionally require:
-
-- Automated account onboarding (Organizations EventBridge → Terraform pipeline)
-- SSM session logging to CloudWatch Logs
-- Alarm cleanup for terminated instances (EventBridge on EC2 state-change)
-- Per-workload threshold policies (not a single global 85%)
-- SCP enforcing `DiskMonitoringInstanceProfile` at instance launch
-
-**Not live-tested:** This code has not been run against real AWS accounts. All validation is local (tests, Terraform validate, offline demo). Cloud integration testing is required before production use.
-
----
-
-## Key trade-offs
-
-| Decision | Why | Alternative considered |
-|---|---|---|
-| AWS | Production familiarity; SSM + OAM available natively | Azure (AMA + Lighthouse), GCP (Ops Agent + Monitoring) |
-| SSM over SSH | No key management, IAM-based, full audit trail, zero open ports | SSH with bastion or EC2 Instance Connect |
-| CloudWatch Agent push over Ansible poll | Scales independently of Ansible; agent runs continuously | Cron-based `df` via Ansible — fails at scale |
-| OAM over custom pipeline | Native, read-only, no infrastructure to operate | Lambda + Kinesis + DynamoDB — more complexity, more failure modes |
-| Alarms in monitoring account | Required by CloudWatch — composite alarms must reference same-account alarms | Alarms in member accounts — composite aggregation not possible cross-account |
-| Normalized `DiskUsedPercent` | Identical metric contract for Linux and Windows alarms | Separate alarm thresholds per platform — confusing to operate |
-
----
-
-## Cost model
-
-CloudWatch is not free. This design replaces a third-party monitoring bill with a CloudWatch bill:
-
-- Custom metrics: ~$0.30/metric/month × 4 metrics × monitored mount paths × instances
-- Alarms: ~$0.10/alarm/month × 2 per instance + 1 composite per region
-- OAM: no separate charge; observed metrics count toward source-account metric ingestion
-- SSM Session Manager: no per-session charge; S3 session log storage at standard rates
-
-Controlling which mount points are monitored (suppressing tmpfs/devtmpfs/squashfs) is the main cost lever.
+This submission demonstrates the full architectural pattern and is syntactically and logically correct. It has not been deployed to real AWS accounts. Production deployment would additionally require: automated account onboarding via Organizations + EventBridge, SSM session logging, alarm cleanup on instance termination, and per-workload threshold policies.
