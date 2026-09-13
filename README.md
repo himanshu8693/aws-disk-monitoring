@@ -13,39 +13,54 @@ A multi-account AWS environment grown through acquisitions needs early warning o
 
 ## Architecture overview
 
-```
-AWS Organization
-├── Automation account       — Ansible control node, IAM Identity Center
-├── Monitoring account       — OAM sink, CloudWatch alarms, SNS, dashboards
-├── Member account A (111)   — EC2 (Linux + Windows), us-east-1, us-west-2
-└── Member account B (222)   — EC2 (Linux), eu-west-1
+```mermaid
+flowchart TD
+    subgraph AUTO["🔧 Automation Account"]
+        ANSIBLE["Ansible Control Node\nIAM Identity Center · No static keys"]
+    end
 
-Flow:
-  Ansible (Automation account)
-      │
-      ├─ STS AssumeRole ──→ Member account A / B
-      │   (ExternalId, short-lived token)
-      │
-      ├─ SSM Session Manager ──→ EC2 instances
-      │   (no SSH, no open inbound ports)
-      │
-      └─ Installs CloudWatch Agent (Linux)
-         Deploys PowerShell scheduled task (Windows)
-              │
-              │ PutMetricData every 60s
-              ▼
-       CloudWatch (member account, per region)
-              │
-              │ OAM link (read-only)
-              ▼
-       CloudWatch (monitoring account)
-              │
-       Per-instance alarm: DiskUsedPercent >= 85%
-              │
-       Regional composite alarm: ANY instance critical
-              │
-       SNS → email / PagerDuty
+    subgraph ACCA["🏢 Member Account A  ·  us-east-1 / us-west-2"]
+        EC2L["EC2 Linux\nCloudWatch Agent"]
+        EC2W["EC2 Windows\nPowerShell scheduled task"]
+        CWA["CloudWatch\nDiskMonitoring namespace"]
+        EC2L & EC2W -->|"DiskUsedPercent\nevery 60s"| CWA
+    end
+
+    subgraph ACCB["🏢 Member Account B  ·  eu-west-1"]
+        EC2B["EC2 Linux\nCloudWatch Agent"]
+        CWB["CloudWatch\nDiskMonitoring namespace"]
+        EC2B -->|"DiskUsedPercent\nevery 60s"| CWB
+    end
+
+    subgraph MON["📊 Monitoring Account"]
+        OAMSINK["OAM Sink\n(read-only metric access)"]
+        ALARMS["Per-instance alarms\nDiskUsedPercent ≥ 85%\ntreat_missing_data: breaching"]
+        COMPOSITE["Regional composite alarm\nANY instance critical → 1 page"]
+        SNS["SNS Topic\ndisk-monitoring-alerts"]
+        DASH["CloudWatch Dashboard"]
+        OAMSINK --> ALARMS --> COMPOSITE --> SNS
+    end
+
+    %% Ansible provisions everything
+    ANSIBLE -->|"sts:AssumeRole + ExternalId\nSSM Session · no SSH · no open ports"| ACCA
+    ANSIBLE -->|"sts:AssumeRole + ExternalId\nSSM Session · no SSH · no open ports"| ACCB
+    ANSIBLE -->|"Creates alarms\n& SNS topics"| MON
+
+    %% Metrics flow via OAM
+    CWA -->|"OAM link\nread-only"| OAMSINK
+    CWB -->|"OAM link\nread-only"| OAMSINK
+
+    %% Alert
+    SNS -->|"Alert"| ONCALL["📟 On-call\nSlack / PagerDuty"]
+
+    style AUTO  fill:#0d2137,stroke:#388bfd,color:#79c0ff
+    style ACCA  fill:#0f3d1f,stroke:#3fb950,color:#56d364
+    style ACCB  fill:#0f3d1f,stroke:#3fb950,color:#56d364
+    style MON   fill:#1c1c3a,stroke:#8957e5,color:#bc8cff
+    style ONCALL fill:#2d1a00,stroke:#d29922,color:#ffa657
 ```
+
+> **Full diagrams** — account topology, metric collection, alarm chain, IAM trust model, sequence diagram, and onboarding flow — are in [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
