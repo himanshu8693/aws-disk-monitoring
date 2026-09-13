@@ -99,7 +99,7 @@ flowchart LR
         direction TB
         OS_L["OS disk stats\n/proc/mounts"]
         CWA["CloudWatch Agent\namazon-cloudwatch-agent"]
-        CFG["agent config\n.json.j2 template\n─────────────\nrename:\n  disk_used_percent\n  → DiskUsedPercent"]
+        CFG["agent config\n.json.j2 template\n-------------\nrename:\n  disk_used_percent\n  → DiskUsedPercent"]
         OS_L --> CWA --> CFG
     end
 
@@ -107,7 +107,7 @@ flowchart LR
         direction TB
         WMI["Win32_LogicalDisk\nWMI object"]
         PS["emit-disk-metrics.ps1\nScheduled Task · SYSTEM\nevery 1 minute"]
-        CALC["used% =\n(Size − FreeSpace)\n ─────────────── × 100\n      Size"]
+        CALC["used% =\n(Size − FreeSpace)\n --------------- × 100\n      Size"]
         WMI --> PS --> CALC
     end
 
@@ -139,22 +139,22 @@ flowchart LR
 flowchart TD
     subgraph SRC["Member Account (source)"]
         AGENT["CloudWatch Agent /\nPowerShell task"]
-        CWM["CloudWatch Metrics\nDiskMonitoring::DiskUsedPercent\n─────────────────────────\nPeriod: 60s  ·  Stat: Average"]
+        CWM["CloudWatch Metrics\nDiskMonitoring::DiskUsedPercent\n-------------------------\nPeriod: 60s  ·  Stat: Average"]
         AGENT -->|PutMetricData| CWM
     end
 
     subgraph LINK["OAM  (read-only bridge)"]
-        OAMLINK["OAM Link\naccount 111… → monitoring sink\n─────────────────────────\nResource type:\nAWS::CloudWatch::Metric"]
+        OAMLINK["OAM Link\naccount 111... → monitoring sink\n-------------------------\nResource type:\nAWS::CloudWatch::Metric"]
     end
 
     CWM -->|"read-only\n(no data copy)"| OAMLINK
 
     subgraph MON["Monitoring Account"]
         subgraph INST["Per-instance alarm  ×N"]
-            PA["alarm: disk-critical-111…-i-0abc\n─────────────────────────────\nmetrics[].account_id: 111…\nDiskUsedPercent ≥ 85%\nevaluation_periods: 10  ×  60s\ntreat_missing_data: breaching"]
+            PA["alarm: disk-critical-111...-i-0abc\n-----------------------------\nmetrics[].account_id: 111...\nDiskUsedPercent ≥ 85%\nevaluation_periods: 10  ×  60s\ntreat_missing_data: breaching"]
         end
         subgraph COMP["Regional composite alarm  ×1 per region"]
-            CA["alarm: fleet-disk-critical-us-east-1\n─────────────────────────────────\nrule: ALARM(\"disk-critical-111-i-0abc\")\n   OR ALARM(\"disk-critical-111-i-0def\")\n   OR ALARM(\"disk-critical-222-i-0xyz\")"]
+            CA["alarm: fleet-disk-critical-us-east-1\nrule: ALARM disk-critical-111-i-0abc\n  OR ALARM disk-critical-111-i-0def\n  OR ALARM disk-critical-222-i-0xyz"]
         end
         SNS_T["SNS Topic\ndisk-monitoring-alerts"]
         PA -->|"any instance\nin ALARM state"| CA
@@ -172,7 +172,7 @@ flowchart TD
     style LINK  fill:#1a2332,stroke:#4a90d9,color:#e8edf2
     style MON   fill:#1c1c3a,stroke:#8957e5,color:#bc8cff
     style ALERT fill:#2d1a00,stroke:#d29922,color:#ffa657
-    style note1 fill:#2d2208,stroke:#d29922,color:#e3b341,font-size:11px
+    style note1 fill:#2d2208,stroke:#d29922,color:#e3b341
 ```
 
 ---
@@ -208,7 +208,7 @@ sequenceDiagram
 
     Note over EC2,CW: Continuous — every 60 seconds (Ansible not involved)
     loop Every 60s
-        EC2->>CW: PutMetricData: DiskUsedPercent, DiskFreeBytes…
+        EC2->>CW: PutMetricData: DiskUsedPercent, DiskFreeBytes...
     end
 
     Note over CW,CWMON: Always-on — OAM makes metrics readable in monitoring account
@@ -216,7 +216,7 @@ sequenceDiagram
     OAM-->>CWMON: read-only metric access
 
     Note over CTL,CWMON: Play 3 — disk_alerting (control-plane only, no EC2 connection)
-    CTL->>CWMON: CreateAlarm: disk-critical-111-i-0abc<br/>(metrics[].account_id = 111…)
+    CTL->>CWMON: CreateAlarm: disk-critical-111-i-0abc<br/>(metrics[].account_id = 111...)
     CTL->>CWMON: CreateAlarm: disk-warning-111-i-0abc
     CTL->>CWMON: CreateAlarm: fleet-disk-critical-us-east-1<br/>(composite rule)
     CTL->>CWMON: CreateTopic: disk-monitoring-alerts
@@ -273,8 +273,8 @@ graph LR
     end
 
     subgraph MEMBER["Member Account  (per acquired company)"]
-        AUTO_ROLE["DiskMonitoringAutomationRole\n─────────────────────────────\nTrust: automation account root\nCondition: ExternalId =\n  disk-monitoring-{account-id}\n─────────────────────────────\nPerms: ec2:Describe*\n  ssm:StartSession\n  ssm:DescribeInstanceInformation\n  s3:PutObject (SSM bucket only)"]
-        INST_ROLE["DiskMonitoringInstanceRole\n(EC2 instance profile)\n─────────────────────────────\nAmazonSSMManagedInstanceCore\nCloudWatchAgentServerPolicy"]
+        AUTO_ROLE["DiskMonitoringAutomationRole\n-----------------------------\nTrust: automation account root\nCondition: ExternalId =\n  disk-monitoring-{account-id}\n-----------------------------\nPerms: ec2:Describe*\n  ssm:StartSession\n  ssm:DescribeInstanceInformation\n  s3:PutObject (SSM bucket only)"]
+        INST_ROLE["DiskMonitoringInstanceRole\n(EC2 instance profile)\n-----------------------------\nAmazonSSMManagedInstanceCore\nCloudWatchAgentServerPolicy"]
         S3["S3 SSM bucket\nKMS-encrypted\n7-day lifecycle"]
         AUTO_ROLE --> S3
     end
@@ -283,7 +283,7 @@ graph LR
     AUTO_ROLE -->|"SSM Session\nvia instance profile"| INST_ROLE
 
     subgraph MON_ACC["Monitoring Account"]
-        MON_ROLE["Monitoring identity\n(separate role)\n─────────────────────────\ncloudwatch:PutMetricAlarm\ncloudwatch:DescribeAlarms\nsns:CreateTopic"]
+        MON_ROLE["Monitoring identity\n(separate role)\n-------------------------\ncloudwatch:PutMetricAlarm\ncloudwatch:DescribeAlarms\nsns:CreateTopic"]
     end
 
     ANSIBLE2 -->|"sts:AssumeRole"| MON_ROLE
