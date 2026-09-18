@@ -1,0 +1,9 @@
+---
+# Run after deploy-host.yml has completed on all hosts.
+# Creates/updates CloudWatch alarms for every host in the inventory.
+- name: create CloudWatch alarms and SNS topics
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  roles:
+    - role: disk_alerting

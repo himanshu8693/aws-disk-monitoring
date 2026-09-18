@@ -1,13 +1,23 @@
 ---
+# Play 1 & 2 use serial:1 so Ansible processes one host at a time.
+# On macOS the SSM connection plugin (aws ssm start-session subprocess) leaves
+# file descriptors open that crash the Ansible worker when it forks for the
+# next host. serial:1 cannot fix this because the crash is in the fork() itself.
+# The correct workaround on macOS is to run this playbook per-host:
+#   for h in $(ansible all --list-hosts -q); do ansible-playbook playbooks/site.yml --limit $h; done
+# On Linux control nodes (production) serial:1 or removing serial entirely works fine.
+
 - name: check SSM is reachable on every host
   hosts: all
   gather_facts: false
+  serial: 1
   roles:
     - role: ssm_bootstrap
 
 - name: install and configure CloudWatch Agent
   hosts: all
   gather_facts: true
+  serial: 1
   roles:
     - role: cloudwatch_agent
 
