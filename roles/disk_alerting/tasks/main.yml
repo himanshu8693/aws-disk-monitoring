@@ -51,7 +51,7 @@
             metric_name: DiskUsedPercent
             dimensions:
               - name: InstanceId
-                value: "{{ item }}"
+                value: "{{ hostvars[item]['instance_id'] }}"
           period: 60
           stat: Average
           unit: Percent
@@ -89,7 +89,7 @@
             metric_name: DiskUsedPercent
             dimensions:
               - name: InstanceId
-                value: "{{ item }}"
+                value: "{{ hostvars[item]['instance_id'] }}"
           period: 60
           stat: Average
           unit: Percent
@@ -127,7 +127,7 @@
             metric_name: DiskUsedPercent
             dimensions:
               - name: InstanceId
-                value: "{{ item }}"
+                value: "{{ hostvars[item]['instance_id'] }}"
           period: 60
           stat: Average
           unit: Percent
@@ -157,7 +157,7 @@
             metric_name: DiskUsedPercent
             dimensions:
               - name: InstanceId
-                value: "{{ item }}"
+                value: "{{ hostvars[item]['instance_id'] }}"
           period: 60
           stat: Average
           unit: Percent
