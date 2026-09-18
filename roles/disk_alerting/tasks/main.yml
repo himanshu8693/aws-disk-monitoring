@@ -12,8 +12,9 @@
 # which is the correct CloudWatch cross-account alarm mechanism. Using AccountId
 # as a metric dimension is NOT the correct mechanism and is not used here.
 #
-# PoC scope: demonstrates the pattern. Multi-region works by running this role
-# targeting the monitoring account in each region where instances exist.
+# SINGLE-ACCOUNT MODE: when monitoring_account_id == source account_id,
+# the account_id field is omitted from the MetricDataQuery — CloudWatch rejects it
+# when the alarm and metric are in the same account.
 
 - name: collect unique regions from inventory
   ansible.builtin.set_fact:
@@ -27,21 +28,20 @@
       }}
 
 - name: ensure SNS topic exists in monitoring account (one per region)
-  amazon.aws.sns_topic:
+  community.aws.sns_topic:
     name: "{{ sns_topic_name }}"
     display_name: "{{ sns_topic_display_name }}"
     region: "{{ item }}"
     state: present
   loop: "{{ monitoring_regions }}"
 
-- name: create per-instance critical alarm in monitoring account
+# Cross-account alarm: account_id in MetricDataQuery routes via OAM to the source account.
+# Used when monitoring account differs from the source (member) account.
+- name: create per-instance critical alarm (cross-account)
   amazon.aws.cloudwatch_metric_alarm:
     state: present
     region: "{{ hostvars[item]['ansible_aws_ssm_region'] }}"
     name: "disk-critical-{{ hostvars[item]['account_id'] }}-{{ item }}"
-    # Use metrics[] so that account_id is set at the MetricDataQuery level.
-    # This is the correct CloudWatch mechanism for cross-account metric alarms.
-    # metrics[] and dimensions/namespace/metric_name/statistic/period are mutually exclusive.
     metrics:
       - id: disk_used
         account_id: "{{ hostvars[item]['account_id'] }}"
@@ -56,11 +56,11 @@
           stat: Average
           unit: Percent
         return_data: true
-    comparison: ">="
+    comparison: "GreaterThanOrEqualToThreshold"
     threshold: "{{ hostvars[item]['disk_alert_critical_percent'] | default(disk_alert_critical_percent) | float }}"
     evaluation_periods: "{{ disk_alert_evaluation_minutes }}"
     treat_missing_data: breaching
-    alarm_description: >-
+    description: >-
       DiskUsedPercent >= {{ hostvars[item]['disk_alert_critical_percent'] | default(disk_alert_critical_percent) }}%
       on {{ item }} (source account {{ hostvars[item]['account_id'] }}, monitored via OAM).
       treat_missing_data=breaching: a dead agent fires the alarm rather than staying green.
@@ -73,8 +73,47 @@
   loop: "{{ groups['all'] | default([]) }}"
   loop_control:
     label: "{{ item }}"
+  when: hostvars[item]['account_id'] != monitoring_account_id
 
-- name: create per-instance warning alarm (dashboard visibility, no notification)
+# Single-account alarm: no account_id in MetricDataQuery — same-account metrics are local.
+- name: create per-instance critical alarm (single-account)
+  amazon.aws.cloudwatch_metric_alarm:
+    state: present
+    region: "{{ hostvars[item]['ansible_aws_ssm_region'] }}"
+    name: "disk-critical-{{ hostvars[item]['account_id'] }}-{{ item }}"
+    metrics:
+      - id: disk_used
+        metric_stat:
+          metric:
+            namespace: "{{ cloudwatch_namespace }}"
+            metric_name: DiskUsedPercent
+            dimensions:
+              - name: InstanceId
+                value: "{{ item }}"
+          period: 60
+          stat: Average
+          unit: Percent
+        return_data: true
+    comparison: "GreaterThanOrEqualToThreshold"
+    threshold: "{{ hostvars[item]['disk_alert_critical_percent'] | default(disk_alert_critical_percent) | float }}"
+    evaluation_periods: "{{ disk_alert_evaluation_minutes }}"
+    treat_missing_data: breaching
+    description: >-
+      DiskUsedPercent >= {{ hostvars[item]['disk_alert_critical_percent'] | default(disk_alert_critical_percent) }}%
+      on {{ item }} (single-account mode — alarm and metric in same account).
+      treat_missing_data=breaching: a dead agent fires the alarm rather than staying green.
+    alarm_actions:
+      - "arn:aws:sns:{{ hostvars[item]['ansible_aws_ssm_region'] }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
+    ok_actions:
+      - "arn:aws:sns:{{ hostvars[item]['ansible_aws_ssm_region'] }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
+    insufficient_data_actions:
+      - "arn:aws:sns:{{ hostvars[item]['ansible_aws_ssm_region'] }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
+  loop: "{{ groups['all'] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when: hostvars[item]['account_id'] == monitoring_account_id
+
+- name: create per-instance warning alarm (cross-account)
   amazon.aws.cloudwatch_metric_alarm:
     state: present
     region: "{{ hostvars[item]['ansible_aws_ssm_region'] }}"
@@ -93,20 +132,49 @@
           stat: Average
           unit: Percent
         return_data: true
-    comparison: ">="
+    comparison: "GreaterThanOrEqualToThreshold"
     threshold: "{{ hostvars[item]['disk_alert_warning_percent'] | default(disk_alert_warning_percent) | float }}"
     evaluation_periods: "{{ disk_alert_evaluation_minutes }}"
     treat_missing_data: breaching
-    alarm_description: >-
+    description: >-
       DiskUsedPercent >= {{ hostvars[item]['disk_alert_warning_percent'] | default(disk_alert_warning_percent) }}%
       on {{ item }} — warning only, no notification action.
   loop: "{{ groups['all'] | default([]) }}"
   loop_control:
     label: "{{ item }}"
+  when: hostvars[item]['account_id'] != monitoring_account_id
 
-# Build one composite alarm per region. The rule references all per-instance critical alarms
-# in that region. Both composite and per-instance alarms are in the monitoring account,
-# which is required for composite alarm references to be valid.
+- name: create per-instance warning alarm (single-account)
+  amazon.aws.cloudwatch_metric_alarm:
+    state: present
+    region: "{{ hostvars[item]['ansible_aws_ssm_region'] }}"
+    name: "disk-warning-{{ hostvars[item]['account_id'] }}-{{ item }}"
+    metrics:
+      - id: disk_used
+        metric_stat:
+          metric:
+            namespace: "{{ cloudwatch_namespace }}"
+            metric_name: DiskUsedPercent
+            dimensions:
+              - name: InstanceId
+                value: "{{ item }}"
+          period: 60
+          stat: Average
+          unit: Percent
+        return_data: true
+    comparison: "GreaterThanOrEqualToThreshold"
+    threshold: "{{ hostvars[item]['disk_alert_warning_percent'] | default(disk_alert_warning_percent) | float }}"
+    evaluation_periods: "{{ disk_alert_evaluation_minutes }}"
+    treat_missing_data: breaching
+    description: >-
+      DiskUsedPercent >= {{ hostvars[item]['disk_alert_warning_percent'] | default(disk_alert_warning_percent) }}%
+      on {{ item }} — warning only, no notification action (single-account mode).
+  loop: "{{ groups['all'] | default([]) }}"
+  loop_control:
+    label: "{{ item }}"
+  when: hostvars[item]['account_id'] == monitoring_account_id
+
+# Build one composite alarm per region.
 - name: build composite alarm rule for each region
   ansible.builtin.set_fact:
     composite_rule_for_region: >-
@@ -129,18 +197,18 @@
      list | length) > 0
 
 - name: create regional composite alarm (fires when any instance in region is critical)
-  amazon.aws.cloudwatch_metric_alarm:
-    state: present
-    region: "{{ item.item }}"
-    name: "fleet-disk-critical-{{ item.item }}"
-    alarm_description: >-
-      At least one instance in {{ item.item }} has DiskUsedPercent >= critical threshold.
-      Drill into per-instance alarms for details. Both alarms live in the monitoring account.
-    alarm_rule: "{{ item.ansible_facts.composite_rule_for_region }}"
-    alarm_actions:
-      - "arn:aws:sns:{{ item.item }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
-    ok_actions:
-      - "arn:aws:sns:{{ item.item }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
+  # amazon.aws.cloudwatch_metric_alarm does not support alarm_rule (composite alarms)
+  # at this collection version — use the AWS CLI directly via command module.
+  ansible.builtin.command:
+    cmd: >
+      aws cloudwatch put-composite-alarm
+        --region {{ item.item }}
+        --alarm-name "fleet-disk-critical-{{ item.item }}"
+        --alarm-description "At least one instance in {{ item.item }} has DiskUsedPercent >= critical threshold."
+        --alarm-rule "{{ item.ansible_facts.composite_rule_for_region }}"
+        --alarm-actions "arn:aws:sns:{{ item.item }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
+        --ok-actions "arn:aws:sns:{{ item.item }}:{{ monitoring_account_id }}:{{ sns_topic_name }}"
+  changed_when: true
   loop: "{{ composite_rule_results.results }}"
   loop_control:
     label: "{{ item.item }}"

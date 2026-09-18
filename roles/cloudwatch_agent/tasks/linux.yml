@@ -4,9 +4,14 @@
     cwa_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
     cwa_pkg_mgr: "{{ 'rpm' if ansible_os_family in ['RedHat', 'Amazon', 'Suse'] else 'deb' }}"
 
+- name: set OS path segment for download URL
+  ansible.builtin.set_fact:
+    # Amazon S3 bucket uses 'amazon_linux' path for RPM, 'ubuntu' for DEB
+    cwa_os_path: "{{ 'amazon_linux' if cwa_pkg_mgr == 'rpm' else 'ubuntu' }}"
+
 - name: set download URL
   ansible.builtin.set_fact:
-    cwa_pkg_url: "{{ cloudwatch_agent_download_base }}/linux/{{ cwa_arch }}/latest/amazon-cloudwatch-agent.{{ cwa_pkg_mgr }}"
+    cwa_pkg_url: "{{ cloudwatch_agent_download_base }}/{{ cwa_os_path }}/{{ cwa_arch }}/latest/amazon-cloudwatch-agent.{{ cwa_pkg_mgr }}"
 
 - name: download CloudWatch Agent
   ansible.builtin.get_url:
@@ -18,12 +23,14 @@
   ansible.builtin.yum:
     name: "/tmp/amazon-cloudwatch-agent.rpm"
     state: present
+  become: true
   when: cwa_pkg_mgr == 'rpm'
 
 - name: install (deb)
   ansible.builtin.apt:
     deb: "/tmp/amazon-cloudwatch-agent.deb"
     state: present
+  become: true
   when: cwa_pkg_mgr == 'deb'
 
 - name: render agent config
@@ -33,7 +40,10 @@
     owner: root
     group: root
     mode: "0640"
-  notify: restart cloudwatch agent linux
+  become: true
+  # No notify: the 'apply config and start agent' task below already restarts
+  # the service with the latest config whenever it runs, making the handler
+  # redundant and avoiding a second restart that races the config apply.
 
 - name: apply config and start agent
   ansible.builtin.command:
@@ -41,6 +51,7 @@
       /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl
         -a fetch-config -m ec2 -s
         -c file:{{ cloudwatch_agent_config_path_linux }}
+  become: true
   changed_when: false
 
 - name: ensure service is running and enabled
@@ -48,3 +59,4 @@
     name: "{{ cloudwatch_agent_service_name_linux }}"
     state: started
     enabled: true
+  become: true

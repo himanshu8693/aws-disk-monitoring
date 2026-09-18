@@ -12,19 +12,31 @@ terraform {
   }
 }
 
+
+provider "aws" {
+  region = var.aws_region
+}
+
 variable "automation_account_id" {
   description = "Account ID where Ansible runs (the automation account)."
   type        = string
 }
 
 variable "monitoring_account_sink_arn" {
-  description = "OAM sink ARN from the monitoring account (output of org-oam-sink)."
+  description = "OAM sink ARN from the monitoring account (output of org-oam-sink). Leave empty for single-account deployments — OAM links to the same account are not permitted by AWS."
   type        = string
+  default     = ""
 }
 
 variable "account_name" {
   description = "Short name for this account, used in resource names (e.g. acme-corp)."
   type        = string
+}
+
+variable "aws_region" {
+  description = "AWS region where regional resources are created."
+  type        = string
+  default     = "us-east-1"
 }
 
 locals {
@@ -45,7 +57,7 @@ data "aws_iam_policy_document" "automation_trust" {
       type        = "AWS"
       identifiers = ["arn:aws:iam::${var.automation_account_id}:root"]
     }
-    actions = ["sts:AssumeRole"]
+    actions = ["sts:AssumeRole", "sts:SetSourceIdentity"]
     condition {
       test     = "StringEquals"
       variable = "sts:ExternalId"
@@ -157,7 +169,15 @@ resource "aws_s3_bucket_public_access_block" "ssm" {
 }
 
 # OAM link — gives the central monitoring account read-only access to metrics in this account.
+# Skipped in single-account deployments: AWS prohibits a link whose sink is in the same account.
+# The sink account ID is extracted from field 5 of the colon-delimited ARN.
+locals {
+  sink_account_id = var.monitoring_account_sink_arn != "" ? split(":", var.monitoring_account_sink_arn)[4] : ""
+  create_oam_link = var.monitoring_account_sink_arn != "" && local.sink_account_id != data.aws_caller_identity.current.account_id
+}
+
 resource "aws_oam_link" "to_monitoring" {
+  count           = local.create_oam_link ? 1 : 0
   label_template  = "$AccountName"
   resource_types  = ["AWS::CloudWatch::Metric", "AWS::Logs::LogGroup"]
   sink_identifier = var.monitoring_account_sink_arn

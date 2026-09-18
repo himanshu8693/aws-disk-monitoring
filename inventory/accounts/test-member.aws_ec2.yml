@@ -1,0 +1,35 @@
+# Single-account test mode — automation and member are the same account.
+# assume_role_arn removed: no cross-account STS needed in this configuration.
+# In a real multi-account deployment, restore assume_role_arn pointing to
+# DiskMonitoringAutomationRole in the target member account.
+plugin: amazon.aws.aws_ec2
+
+regions:
+  - us-east-1
+
+filters:
+  instance-state-name: running
+
+keyed_groups:
+  - key: tags['BusinessUnit'] | default('unassigned')
+    prefix: bu
+  - key: platform | default('linux')
+    prefix: os
+
+compose:
+  ansible_aws_ssm_region: placement.region
+  ansible_connection: "'amazon.aws.aws_ssm'"
+  ansible_aws_ssm_bucket_name: "'disk-monitoring-ssm-test-member-account1'"
+  # ansible_host must be the EC2 instance ID for the SSM connection plugin.
+  # instance_id is populated by the aws_ec2 dynamic inventory plugin.
+  ansible_host: instance_id
+  account_id: "'266349568266'"
+  account_name: "'test-member-account1'"
+  # Amazon Linux 2 ships Python 3.7; ansible-core>=2.17 requires Python 3.8+.
+  # python3.8 installed via: amazon-linux-extras install python3.8 -y
+  ansible_python_interpreter: "'/usr/bin/python3.8'"
+
+
+hostnames:
+  - tag:Name
+  - instance-id

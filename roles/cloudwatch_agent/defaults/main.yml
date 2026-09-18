@@ -16,4 +16,4 @@ cloudwatch_agent_config_path_linux: /opt/aws/amazon-cloudwatch-agent/etc/amazon-
 cloudwatch_agent_service_name_linux: amazon-cloudwatch-agent
 
 # override this to an S3 VPC endpoint URL if instances have no public internet access
-cloudwatch_agent_download_base: "https://s3.amazonaws.com/amazoncloudwatch-agent"
+cloudwatch_agent_download_base: "https://amazoncloudwatch-agent.s3.amazonaws.com"

@@ -1,23 +1,20 @@
 ---
-# Pre-flight check: verify this instance is reachable via SSM before any other role runs.
+# Pre-flight check: verify every discovered instance is reachable via SSM.
 #
-# The key subtlety (FIX 3): this task delegates to localhost and calls the AWS SSM API.
-# The dynamic inventory already assumed the correct per-account role (via assume_role_arn
-# in the inventory file), and the host vars carry the assumed role ARN. But a bare
-# `aws ssm describe-instance-information` on localhost will use whatever credentials are
-# in the environment — which may be the automation account's base credentials, not the
-# member-account role.
+# CROSS-ACCOUNT MODE (assume_role_arn set in inventory):
+#   Explicitly assumes DiskMonitoringAutomationRole in the member account using
+#   ExternalId, then calls ssm:DescribeInstanceInformation with those temp creds.
+#   This is the full production path — automation account → STS → member account → SSM.
 #
-# Fix: extract the assumed_role_arn from hostvars and pass it explicitly as AWS_ROLE_ARN
-# via environment, using a per-host STS session. This keeps the check consistent with how
-# the rest of Ansible reaches the host: automation account credentials → AssumeRole →
-# member account credentials → SSM.
+# SINGLE-ACCOUNT MODE (no assume_role_arn in inventory, same-account test):
+#   Skips the STS step. Uses ambient AWS credentials from the environment directly.
+#   The SSM describe call still validates reachability; it just doesn't cross account boundaries.
 
-- name: assume per-account role and get temporary credentials for pre-flight check
+- name: assume per-account role (cross-account mode only)
   ansible.builtin.command:
     cmd: >
       aws sts assume-role
-        --role-arn {{ assumed_role_arn }}
+        --role-arn arn:aws:iam::{{ account_id }}:role/DiskMonitoringAutomationRole
         --role-session-name ssm-preflight-{{ inventory_hostname | regex_replace('[^a-zA-Z0-9_=,.@-]', '-') }}
         --external-id {{ ssm_bootstrap_external_id_prefix }}-{{ account_id }}
         --duration-seconds 900
@@ -27,21 +24,23 @@
   changed_when: false
   no_log: true
   register: sts_raw
+  # Only run when the inventory file includes an assume_role_arn (cross-account deployment).
+  # In single-account mode the inventory has no assume_role_arn, so this task is skipped.
+  when: hostvars[inventory_hostname].get('assume_role_arn', '') != ''
   vars:
-    # assumed_role_arn is the same value the inventory used; we derive it from the inventory
-    # compose block so this stays DRY — it's the assume_role_arn from the inventory file.
-    assumed_role_arn: "arn:aws:iam::{{ account_id }}:role/DiskMonitoringAutomationRole"
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"
 
-- name: parse STS credentials
+- name: parse STS credentials (cross-account mode only)
   ansible.builtin.set_fact:
     preflight_creds: "{{ (sts_raw.stdout | from_json).Credentials }}"
   no_log: true
+  when: sts_raw is defined and sts_raw is not skipped
 
-- name: check SSM managed-instance status using member-account role
+- name: check SSM managed-instance status (cross-account — injected temp creds)
   ansible.builtin.command:
     cmd: >
       aws ssm describe-instance-information
-        --filters "Key=InstanceIds,Values={{ inventory_hostname }}"
+        --filters "Key=InstanceIds,Values={{ hostvars[inventory_hostname]['instance_id'] }}"
         --region {{ ansible_aws_ssm_region }}
         --output json
   delegate_to: localhost
@@ -52,20 +51,40 @@
     AWS_ACCESS_KEY_ID: "{{ preflight_creds.AccessKeyId }}"
     AWS_SECRET_ACCESS_KEY: "{{ preflight_creds.SecretAccessKey }}"
     AWS_SESSION_TOKEN: "{{ preflight_creds.SessionToken }}"
+  when: preflight_creds is defined
+
+- name: check SSM managed-instance status (single-account — ambient creds)
+  ansible.builtin.command:
+    cmd: >
+      aws ssm describe-instance-information
+        --filters "Key=InstanceIds,Values={{ hostvars[inventory_hostname]['instance_id'] }}"
+        --region {{ ansible_aws_ssm_region }}
+        --output json
+  delegate_to: localhost
+  connection: local
+  changed_when: false
+  register: ssm_info_raw
+  when: preflight_creds is not defined
 
 - name: parse SSM response
   ansible.builtin.set_fact:
     ssm_info: "{{ (ssm_info_raw.stdout | from_json).InstanceInformationList | default([]) }}"
 
-- name: fail clearly if instance is not online
+- name: fail clearly if instance is not SSM-reachable
   ansible.builtin.fail:
     msg: >
       {{ inventory_hostname }} (account {{ account_id | default('unknown') }}) is not reachable via SSM.
-      PingStatus expected '{{ ssm_bootstrap_required_ping_status }}', got '{{ ssm_info[0].PingStatus | default('not-registered') }}'.
-      Check: SSM agent running? Instance profile attached? Outbound 443 open to ssm.{{ ansible_aws_ssm_region }}.amazonaws.com?
+      PingStatus expected '{{ ssm_bootstrap_required_ping_status }}',
+      got '{{ ssm_info[0].PingStatus | default('not-registered') }}'.
+      Check: SSM agent running? Instance profile attached?
+      Outbound 443 open to ssm.{{ ansible_aws_ssm_region }}.amazonaws.com?
   when: ssm_info | length == 0 or ssm_info[0].PingStatus != ssm_bootstrap_required_ping_status
 
 - name: report SSM status
   ansible.builtin.debug:
-    msg: "OK {{ inventory_hostname }} — PingStatus={{ ssm_info[0].PingStatus }}, Platform={{ ssm_info[0].PlatformType | default('?') }}, AgentVersion={{ ssm_info[0].AgentVersion | default('?') }}"
+    msg: >-
+      OK {{ inventory_hostname }} —
+      PingStatus={{ ssm_info[0].PingStatus }},
+      Platform={{ ssm_info[0].PlatformType | default('?') }},
+      AgentVersion={{ ssm_info[0].AgentVersion | default('?') }}
   when: ssm_info | length > 0

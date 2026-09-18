@@ -1,8 +1,13 @@
 ---
 - name: restart cloudwatch agent linux
-  ansible.builtin.service:
-    name: "{{ cloudwatch_agent_service_name_linux }}"
-    state: restarted
+  # Restart via amazon-cloudwatch-agent-ctl to avoid the PolicyKit D-Bus
+  # unavailability inside SSM shell sessions.
+  # The config has already been applied by the task; we just need to cycle the service.
+  ansible.builtin.command:
+    cmd: >
+      /opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a stop
+  become: true
+  changed_when: false
   listen: restart cloudwatch agent linux
 
 - name: restart cloudwatch agent windows
