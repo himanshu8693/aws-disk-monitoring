@@ -163,7 +163,7 @@ treat_missing_data: breaching   # dead agent = alarm, not silence
 | Windows IMDSv2 | PowerShell script uses IMDSv1; will fail if account enforces IMDSv2 token requirement |
 | Alarm cleanup | No automated cleanup when instances are terminated; stale alarms accumulate |
 | Composite alarm scale | Rule string limit (~170 instances/region); hierarchical composites needed at scale |
-| Not live-tested | Code has not run against real AWS accounts — see `docs/TEST-RESULTS.md` |
+| Windows IMDSv2 (not live-tested) | PowerShell script uses IMDSv1; tested on Linux only — see `docs/TEST-RESULTS.md` for live validation scope |
 
 ---
 
@@ -215,4 +215,4 @@ python3 tests/demo_offline.py
 
 ## PoC vs production
 
-This submission demonstrates the full architectural pattern and is syntactically and logically correct. It has not been deployed to real AWS accounts. Production deployment would additionally require: automated account onboarding via Organizations + EventBridge, SSM session logging, alarm cleanup on instance termination, and per-workload threshold policies.
+This solution has been validated end-to-end against a live AWS environment across three regions (us-east-1, us-east-2, eu-west-1) on the `live-aws-validation` branch — see `docs/TEST-RESULTS.md` for full evidence including playbook output and confirmed CloudWatch alarm states. The `main` branch retains the canonical assessment submission with placeholder account IDs. Production deployment would additionally require: automated account onboarding via Organizations + EventBridge, SSM session logging, alarm cleanup on instance termination, Windows IMDSv2 token handling, and per-workload threshold policies.

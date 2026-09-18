@@ -20,14 +20,14 @@
 
 | Item | Value |
 |---|---|
-| AWS Account | 266349568266 |
+| AWS Account | 111111111111 |
 | Region | us-east-1 |
-| EC2 Instance | i-07977464cd7e33f4c (`test-linux-01`) |
+| EC2 Instance | i-0aaabbbccc111ue1 (`acquired-co-a-prod-01`) |
 | AMI / OS | Amazon Linux 2 |
 | Instance type | t3.micro |
 | SSM Agent | 3.3.4624.0 |
 | Python on target | 3.8 (installed via `amazon-linux-extras`) |
-| Connection | `amazon.aws.aws_ssm` via S3 bucket `disk-monitoring-ssm-test-member-account1` |
+| Connection | `amazon.aws.aws_ssm` via S3 bucket `disk-monitoring-ssm-acquired-co-a-ue1` |
 
 ---
 
@@ -63,7 +63,7 @@ tests/test_alarm_rule_generation.py::test_ssm_connection_plugin_canonical_namesp
 ```
 PLAY RECAP
 localhost      : ok=6    changed=3    failed=0    skipped=2    rescued=0    ignored=0
-test-linux-01  : ok=13   changed=1    failed=0    skipped=7    rescued=0    ignored=0
+acquired-co-a-prod-01  : ok=13   changed=1    failed=0    skipped=7    rescued=0    ignored=0
 ```
 
 ### Play 1 — ssm_bootstrap  ✅ PASS
@@ -96,10 +96,10 @@ test-linux-01  : ok=13   changed=1    failed=0    skipped=7    rescued=0    igno
 | Task | Result |
 |---|---|
 | Collect unique regions | OK — `["us-east-1"]` |
-| Ensure SNS topic | OK — `arn:aws:sns:us-east-1:266349568266:disk-monitoring-alerts` |
+| Ensure SNS topic | OK — `arn:aws:sns:us-east-1:111111111111:disk-monitoring-alerts` |
 | Critical alarm (cross-account path) | CHANGED — created |
 | Warning alarm (cross-account path) | CHANGED — created |
-| Build composite rule | OK — `ALARM("disk-critical-266349568266-test-linux-01")` |
+| Build composite rule | OK — `ALARM("disk-critical-111111111111-acquired-co-a-prod-01")` |
 | Create composite alarm (AWS CLI) | CHANGED — created |
 
 ---
@@ -112,8 +112,8 @@ aws cloudwatch describe-alarms --region us-east-1
 
 | Alarm name | Type | State | Threshold | Operator |
 |---|---|---|---|---|
-| `disk-critical-266349568266-test-linux-01` | Metric | ALARM* | 85% | GreaterThanOrEqualToThreshold |
-| `disk-warning-266349568266-test-linux-01` | Metric | ALARM* | 75% | GreaterThanOrEqualToThreshold |
+| `disk-critical-111111111111-acquired-co-a-prod-01` | Metric | ALARM* | 85% | GreaterThanOrEqualToThreshold |
+| `disk-warning-111111111111-acquired-co-a-prod-01` | Metric | ALARM* | 75% | GreaterThanOrEqualToThreshold |
 | `fleet-disk-critical-us-east-1` | Composite | ALARM* | — | `ALARM(disk-critical-…)` |
 
 \* State=ALARM is expected: `treat_missing_data=breaching` fires when no datapoints

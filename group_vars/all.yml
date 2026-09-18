@@ -10,5 +10,5 @@ sns_topic_name: disk-monitoring-alerts
 sns_topic_display_name: "Disk Monitoring Alerts"
 
 # update these to match your actual monitoring account
-monitoring_account_id: "266349568266"
+monitoring_account_id: "111111111111"  # replace with your monitoring account ID
 monitoring_region: us-east-1

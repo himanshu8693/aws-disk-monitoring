@@ -30,16 +30,16 @@ compose:
   # Add a new entry here when onboarding a new region; no other change needed.
   ansible_aws_ssm_bucket_name: >-
     {
-      'us-east-1': 'disk-monitoring-ssm-test-member-account1',
-      'us-east-2': 'disk-monitoring-ssm-test-member-use2',
-      'eu-west-1': 'disk-monitoring-ssm-test-member-euw1'
+      'us-east-1': 'disk-monitoring-ssm-acquired-co-a-ue1',
+      'us-east-2': 'disk-monitoring-ssm-acquired-co-a-ue2',
+      'eu-west-1': 'disk-monitoring-ssm-acquired-co-a-euw1'
     }[placement.region]
 
   # ansible_host must be the EC2 instance ID for the SSM connection plugin.
   ansible_host: instance_id
 
-  account_id: "'266349568266'"
-  account_name: "'test-member-account1'"
+  account_id: "'111111111111'"
+  account_name: "'acquired-co-a'"
 
   # Amazon Linux 2 ships Python 3.7; ansible-core 2.16 requires >= 3.8 on target.
   # python3.8 must be pre-installed: amazon-linux-extras install python3.8 -y
