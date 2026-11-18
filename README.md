@@ -3,6 +3,9 @@
 **Assessment:** Solutions Architect — Cloud Consultant case study  
 **Cloud provider:** AWS
 
+**Role alignment:** Solutions Architect · Solutions Engineer · DevOps Engineer · Platform Engineer · SRE · FDE  
+**Case-study status:** Portfolio architecture and offline validation; not deployed to real AWS accounts (see [test results](docs/TEST-RESULTS.md)).
+
 ---
 
 ## Architecture overview
